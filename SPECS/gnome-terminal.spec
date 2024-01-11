@@ -7,7 +7,7 @@
 
 Name: gnome-terminal
 Version: 3.28.3
-Release: 3%{?dist}
+Release: 4%{?dist}
 Summary: Terminal emulator for GNOME
 
 License: GPLv3+ and GFDL and LGPLv2+
@@ -23,6 +23,9 @@ Patch102: 0001-Add-a-manual.patch
 
 # https://bugzilla.redhat.com/show_bug.cgi?id=837035
 Patch103: gnome-terminal-keypad-accels.patch
+
+# https://bugzilla.redhat.com/show_bug.cgi?id=2154269
+Patch104: gnome-terminal-3.28.3-quiet-dconf-logging.patch
 
 BuildRequires: docbook-style-xsl
 BuildRequires: glib2-devel >= %{glib2_version}
@@ -71,6 +74,7 @@ option to the right-click context menu in Nautilus.
 %patch101 -p1 -b .warnings
 %patch102 -p1 -b .manual
 %patch103 -p1 -b .keypad-accels
+%patch104 -p1 -b .dconf-logging
 
 %build
 autoreconf -f -i
@@ -111,6 +115,9 @@ make check
 %{_datadir}/metainfo/org.gnome.Terminal.Nautilus.metainfo.xml
 
 %changelog
+* Thu May 04 2023 David King <amigadave@amigadave.com> - 3.28.3-4
+- Quiet dconf logging (#2154269)
+
 * Mon Nov 30 2020 Debarshi Ray <rishi@fedoraproject.org> - 3.28.3-3
 - Support using the '0', '+' and '-' keys from the numeric keypad as
   accelerators
