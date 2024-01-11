@@ -1,0 +1,189 @@
+From 6858b70c0ad36a1a072ec545b2e8bea8e926b06d Mon Sep 17 00:00:00 2001
+From: Egmont Koblinger <egmont@gmail.com>
+Date: Wed, 18 Sep 2019 13:46:47 +0200
+Subject: [PATCH 1/2] build: Bump gtk min-req version to 3.18
+
+https://gitlab.gnome.org/GNOME/gnome-terminal/issues/162
+---
+ configure.ac          |  2 +-
+ src/terminal-accels.c | 26 ++++++++++++--------------
+ 2 files changed, 13 insertions(+), 15 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index 00028858c654..5b5bd4133970 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -61,7 +61,7 @@ AC_MSG_RESULT([$with_gtk])
+ case "$with_gtk" in
+   3.0) GTK_API_VERSION=3.0
+        GTK_REQUIRED=3.12.0
+-       GTK_MIN_REQUIRED=3.8
++       GTK_MIN_REQUIRED=3.18
+        GTK_MAX_ALLOWED=3.22
+        VTE_API_VERSION=2.91
+        VTE_REQUIRED=0.52.2
+diff --git a/src/terminal-accels.c b/src/terminal-accels.c
+index 2ce4635d09cd..1871037f7fab 100644
+--- a/src/terminal-accels.c
++++ b/src/terminal-accels.c
+@@ -259,6 +259,7 @@ key_changed_cb (GSettings *settings,
+                 gpointer user_data)
+ {
+   GtkApplication *application = user_data;
++  const gchar *accels[2] = { NULL, NULL };
+ 
+   _terminal_debug_print (TERMINAL_DEBUG_ACCELS,
+                          "key %s changed\n",
+@@ -278,6 +279,8 @@ key_changed_cb (GSettings *settings,
+   gs_free char *detailed = g_action_print_detailed_name (key_entry->action_name,
+                                                          key_entry->parameter);
+   gs_unref_variant GVariant *shadow_parameter = g_variant_new_string (detailed);
++  gs_free char *shadow_detailed = g_action_print_detailed_name (key_entry->shadow_action_name,
++                                                                shadow_parameter);
+ 
+   /* We want to always consume the action's accelerators, even if the corresponding
+    * action is insensitive, so the corresponding shortcut key escape code isn't sent
+@@ -289,22 +292,17 @@ key_changed_cb (GSettings *settings,
+    */
+ 
+   if (g_str_equal (value, "disabled")) {
+-    gtk_application_remove_accelerator (application,
+-                                        key_entry->action_name,
+-                                        key_entry->parameter);
+-    gtk_application_remove_accelerator (application,
+-                                        key_entry->shadow_action_name,
+-                                        shadow_parameter);
++    accels[0] = NULL;
+   } else {
+-    gtk_application_add_accelerator (application,
+-                                     value,
+-                                     key_entry->action_name,
+-                                     key_entry->parameter);
+-    gtk_application_add_accelerator (application,
+-                                     value,
+-                                     key_entry->shadow_action_name,
+-                                     shadow_parameter);
++    accels[0] = value;
+   }
++
++  gtk_application_set_accels_for_action (application,
++                                         detailed,
++                                         accels);
++  gtk_application_set_accels_for_action (application,
++                                         shadow_detailed,
++                                         accels);
+ }
+ 
+ void
+-- 
+2.28.0
+
+
+From 0a273ebcd6945c6da9b58f4183ff2ccc300d2278 Mon Sep 17 00:00:00 2001
+From: Debarshi Ray <debarshir@gnome.org>
+Date: Thu, 19 Nov 2020 19:25:05 +0100
+Subject: [PATCH 2/2] accels: Support using the '0', '+' and '-' keys from the
+ numeric keypad
+
+Currently, the default accelerators for zooming (ie., Ctrl+0, Ctrl++
+and Ctrl+-) only work with the alphanumeric keys, not the numeric
+keypad, which can confuse users. From now on, any accelerator that has
+the '0', '+' or '-' key will work with both sets of keys.
+
+https://gitlab.gnome.org/GNOME/gnome-terminal/-/issues/313
+---
+ src/terminal-accels.c | 51 +++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 49 insertions(+), 2 deletions(-)
+
+diff --git a/src/terminal-accels.c b/src/terminal-accels.c
+index 1871037f7fab..ab319a83f334 100644
+--- a/src/terminal-accels.c
++++ b/src/terminal-accels.c
+@@ -22,6 +22,7 @@
+ 
+ #include <glib.h>
+ #include <glib/gi18n.h>
++#include <gdk/gdk.h>
+ #include <gtk/gtk.h>
+ 
+ #include "terminal-accels.h"
+@@ -253,13 +254,45 @@ binding_name (guint            keyval,
+   return g_strdup ("disabled");
+ }
+ 
++static guint
++get_alternate_accel_key (guint key)
++{
++  guint retval = 0;
++
++  switch (key) {
++    case GDK_KEY_0:
++      retval = GDK_KEY_KP_0;
++      break;
++    case GDK_KEY_minus:
++      retval = GDK_KEY_KP_Subtract;
++      break;
++    case GDK_KEY_plus:
++      retval = GDK_KEY_KP_Add;
++      break;
++    case GDK_KEY_KP_0:
++      retval = GDK_KEY_0;
++      break;
++    case GDK_KEY_KP_Add:
++      retval = GDK_KEY_plus;
++      break;
++    case GDK_KEY_KP_Subtract:
++      retval = GDK_KEY_minus;
++      break;
++    default:
++      break;
++  }
++
++  return retval;
++}
++
+ static void
+ key_changed_cb (GSettings *settings,
+                 const char *settings_key,
+                 gpointer user_data)
+ {
+   GtkApplication *application = user_data;
+-  const gchar *accels[2] = { NULL, NULL };
++  const gchar *accels[3] = { NULL, NULL, NULL };
++  gsize accels_offset = 0;
+ 
+   _terminal_debug_print (TERMINAL_DEBUG_ACCELS,
+                          "key %s changed\n",
+@@ -275,6 +308,7 @@ key_changed_cb (GSettings *settings,
+     }
+ 
+   gs_free char *value = g_settings_get_string (settings, settings_key);
++  gs_free char *alternate_value = NULL;
+ 
+   gs_free char *detailed = g_action_print_detailed_name (key_entry->action_name,
+                                                          key_entry->parameter);
+@@ -294,7 +328,20 @@ key_changed_cb (GSettings *settings,
+   if (g_str_equal (value, "disabled")) {
+     accels[0] = NULL;
+   } else {
+-    accels[0] = value;
++    accels[accels_offset] = value;
++    accels_offset++;
++
++    GdkModifierType mods;
++    guint key;
++    gtk_accelerator_parse (value, &key, &mods);
++
++    guint alternate_key = get_alternate_accel_key (key);
++
++    if (alternate_key != 0) {
++      alternate_value = gtk_accelerator_name (alternate_key, mods);
++      accels[accels_offset] = alternate_value;
++      accels_offset++;
++    }
+   }
+ 
+   gtk_application_set_accels_for_action (application,
+-- 
+2.28.0
+
